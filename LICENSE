@@ -1,24 +1,248 @@
-This is free and unencumbered software released into the public domain.
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Survival Prototype</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-Anyone is free to copy, modify, publish, use, compile, sell, or
-distribute this software, either in source code form or as a compiled
-binary, for any purpose, commercial or non-commercial, and by any
-means.
+<style>
+body { font-family: Arial, sans-serif; margin: 12px; background:#f4f4f4; }
+#ui { display:flex; gap:12px; flex-wrap:wrap; }
+#left, #right {
+  border:1px solid #aaa;
+  padding:10px;
+  width:100%;
+  max-width:420px;
+  height:620px;
+  overflow:auto;
+  background:white;
+}
+button { margin:4px 0; padding:6px 10px; }
+.map { display:grid; grid-template-columns:repeat(8,48px); gap:4px; }
+.cell {
+  width:48px; height:48px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:12px; cursor:pointer; border-radius:4px;
+}
+.jungle { background:#b6f0a9; }
+.desert { background:#f7e6b8; }
+.ice { background:#dff0ff; }
+.plains { background:#f0f7d9; }
+.creature { border:1px solid #333; padding:6px; margin:6px 0; border-radius:6px; }
+#log { height:130px; overflow:auto; background:#111; color:#bfb; padding:6px; font-size:12px; }
+</style>
+</head>
 
-In jurisdictions that recognize copyright laws, the author or authors
-of this software dedicate any and all copyright interest in the
-software to the public domain. We make this dedication for the benefit
-of the public at large and to the detriment of our heirs and
-successors. We intend this dedication to be an overt act of
-relinquishment in perpetuity of all present and future rights to this
-software under copyright law.
+<body>
+<h2>Survival Prototype (Upgraded)</h2>
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-OTHER DEALINGS IN THE SOFTWARE.
+<div id="ui">
+<div id="left">
+<h3>Player</h3>
+<div>Energy: <span id="energy"></span></div>
+<div>HP: <span id="hp"></span></div>
+<div>Level: <span id="level"></span> | XP: <span id="xp"></span></div>
+<div>Skill Points: <span id="skillPoints"></span></div>
 
-For more information, please refer to <https://unlicense.org>
+<h4>Skills</h4>
+<button onclick="unlockSkill('taming')">Unlock Taming</button>
+<button onclick="unlockSkill('gather')">Unlock Gathering</button>
+
+<h4>Inventory</h4>
+<div id="inventory"></div>
+
+<h4>Creatures</h4>
+<div id="creatures"></div>
+</div>
+
+<div id="right">
+<h3>World Map</h3>
+<div class="map" id="map"></div>
+
+<h4>Location</h4>
+<div id="locationDetails">Select a tile</div>
+
+<h4>Actions</h4>
+<div id="actions"></div>
+
+<h4>Log</h4>
+<div id="log"></div>
+</div>
+</div>
+
+<script>
+/* ---------- STATE ---------- */
+const defaultState = {
+  player:{hp:100,energy:100,level:1,xp:0,skillPoints:0,skills:{}},
+  inventory:{wood:10,stone:5,metal:0,food:5},
+  creatures:[],
+  position:{x:0,y:0},
+  mapSize:{w:8,h:4}
+};
+
+let state = loadState();
+const BIOMES=['plains','jungle','desert','ice'];
+const mapCells=[];
+const creatureTemplates=[
+  {name:'Grazer', tame:0.6},
+  {name:'Fangbeast', tame:0.35},
+  {name:'Stonecarver', tame:0.25}
+];
+
+/* ---------- STORAGE ---------- */
+function loadState(){
+  const txt=localStorage.getItem('survproto_v2');
+  return txt?JSON.parse(txt):JSON.parse(JSON.stringify(defaultState));
+}
+function saveState(){
+  localStorage.setItem('survproto_v2',JSON.stringify(state));
+}
+
+/* ---------- UI ---------- */
+function log(msg){
+  const el=document.getElementById('log');
+  el.innerHTML=msg+"<br>"+el.innerHTML;
+}
+function updateUI(){
+  energy.textContent=state.player.energy;
+  hp.textContent=state.player.hp;
+  level.textContent=state.player.level;
+  xp.textContent=state.player.xp;
+  skillPoints.textContent=state.player.skillPoints;
+
+  inventory.innerHTML='';
+  for(const k in state.inventory){
+    inventory.innerHTML+=`${k}: ${state.inventory[k]}<br>`;
+  }
+
+  creatures.innerHTML=state.creatures.length
+    ? state.creatures.map(c=>`<div class="creature">${c}</div>`).join('')
+    : 'None';
+}
+
+/* ---------- SKILLS ---------- */
+function unlockSkill(skill){
+  if(state.player.skillPoints<=0 || state.player.skills[skill]) return;
+  state.player.skills[skill]=true;
+  state.player.skillPoints--;
+  log(`Unlocked skill: ${skill}`);
+  saveState();
+  updateUI();
+}
+
+/* ---------- MAP ---------- */
+function initMap(){
+  const map=document.getElementById('map');
+  map.innerHTML='';
+  mapCells.length=0;
+
+  for(let y=0;y<state.mapSize.h;y++){
+    for(let x=0;x<state.mapSize.w;x++){
+      const cell={
+        x,y,
+        biome:BIOMES[(x+y)%BIOMES.length],
+        danger:Math.random()<0.2,
+        resources:genResources()
+      };
+      mapCells.push(cell);
+      const el=document.createElement('div');
+      el.className='cell '+cell.biome;
+      el.textContent=cell.biome[0].toUpperCase();
+      el.onclick=()=>travel(cell);
+      map.appendChild(el);
+    }
+  }
+}
+
+function genResources(){
+  return {
+    wood:Math.floor(Math.random()*6),
+    stone:Math.floor(Math.random()*4),
+    metal:Math.random()<0.15?1:0,
+    food:Math.floor(Math.random()*5)
+  };
+}
+
+/* ---------- TRAVEL ---------- */
+function travel(cell){
+  state.position={x:cell.x,y:cell.y};
+  state.player.energy=Math.max(0,state.player.energy-3);
+
+  if(cell.danger && Math.random()<0.4){
+    state.player.hp-=10;
+    log('You were injured traveling!');
+  }
+
+  showLocation(cell);
+  log(`Traveled to (${cell.x},${cell.y}) - ${cell.biome}`);
+  saveState();
+  updateUI();
+}
+
+/* ---------- LOCATION ---------- */
+function showLocation(cell){
+  locationDetails.innerHTML=
+    `<b>${cell.biome.toUpperCase()}</b><br>
+     Wood:${cell.resources.wood}
+     Stone:${cell.resources.stone}
+     Metal:${cell.resources.metal}
+     Food:${cell.resources.food}`;
+
+  actions.innerHTML='';
+
+  const gBtn=document.createElement('button');
+  gBtn.textContent='Gather';
+  gBtn.onclick=()=>gather(cell);
+  actions.appendChild(gBtn);
+
+  if(state.player.skills.taming){
+    const tBtn=document.createElement('button');
+    tBtn.textContent='Attempt Tame';
+    tBtn.onclick=()=>tame();
+    actions.appendChild(tBtn);
+  }
+}
+
+function gather(cell){
+  const mult=state.player.skills.gather?2:1;
+  for(const r in cell.resources){
+    state.inventory[r]+=cell.resources[r]*mult;
+    cell.resources[r]=0;
+  }
+  gainXP(5);
+  log('Gathered resources');
+  saveState();
+  updateUI();
+}
+
+function tame(){
+  const c=creatureTemplates[Math.floor(Math.random()*creatureTemplates.length)];
+  if(Math.random()<c.tame){
+    state.creatures.push(c.name);
+    log(`Tamed a ${c.name}!`);
+    gainXP(15);
+  }else{
+    log('Tame failed');
+  }
+  saveState();
+  updateUI();
+}
+
+/* ---------- XP ---------- */
+function gainXP(amount){
+  state.player.xp+=amount;
+  if(state.player.xp>=state.player.level*50){
+    state.player.xp=0;
+    state.player.level++;
+    state.player.skillPoints++;
+    log('Level up!');
+  }
+}
+
+/* ---------- INIT ---------- */
+initMap();
+updateUI();
+log('Game ready');
+</script>
+</body>
+</html>
